@@ -1,0 +1,77 @@
+x-backend-app-env: &backend-app-env
+  APP_ENV: ${APP_ENV}
+  APP_SECRET: ${APP_SECRET:?APP_SECRET is required}
+  APP_BASE_PATH: ${APP_BASE_PATH:-}
+  LOGGER_MIN_LEVEL: ${LOGGER_MIN_LEVEL}
+  LOGGER_OUTPUT: ${LOGGER_OUTPUT:-/var/log/app/symfony.log}
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+
+x-backend-runtime-php-env: &backend-runtime-php-env
+  PHP_XDEBUG_ENABLED: ${PHP_XDEBUG_ENABLED:-no}
+  XDEBUG_REMOTE_AUTOSTART: ${XDEBUG_REMOTE_AUTOSTART:-yes}
+  XDEBUG_REMOTE_ENABLE: ${XDEBUG_REMOTE_ENABLE:-yes}
+  XDEBUG_REMOTE_HOST: ${XDEBUG_REMOTE_HOST:-host.docker.internal}
+  XDEBUG_REMOTE_CONNECT_BACK: ${XDEBUG_REMOTE_CONNECT_BACK:-1}
+
+services:
+
+  pbz-konfidat:
+    build:
+      context: .
+      dockerfile: Containerfile
+      args:
+        IMAGE_TAG: ${EFFECTIVE_IMAGE_TAG}
+    image: ${DOCKER_REGISTRY:-pbznexus.sit.pbz.hr:54321}/pbz/konfidat:${EFFECTIVE_IMAGE_TAG}
+    container_name: ${USER_PREFIX}-pbz-konfidat
+    restart: 'no'
+    user: "${HOST_UID:-1000}:0"
+    networks:
+      - konfidat-net
+    environment:
+      <<: [*backend-app-env, *backend-runtime-php-env]
+      HTTPD_PASS_ENV_VARS: >-
+        APP_ENV, APP_SECRET, LOGGER_MIN_LEVEL, DATABASE_URL, APP_BASE_PATH
+      HTTPD_CUSTOM_LOG: '/var/log/app/httpd_access.log'
+      HTTPD_ERROR_LOG: '/var/log/app/httpd_error.log'
+      PHP_ERROR_LOG: '/var/log/app/php_error.log'
+    volumes:
+      - ./logs:/var/log/app:Z
+      - ./backend:/opt/app-root/src:rw,Z
+    ports:
+      - "${POD_KONFIDAT_ENTRY_HOSTNAME:-127.0.0.1:10945}:8080"
+
+  pbz-konfidat-frontdev:
+    profiles:
+      - frontdev
+    image: ${DOCKER_REGISTRY:-pbznexus.sit.pbz.hr:54321}/ubi9/nodejs-22-minimal:latest
+    container_name: ${USER_PREFIX}-pbz-konfidat-frontdev
+    restart: 'no'
+    user: "${HOST_UID:-1000}:0"
+    working_dir: /opt/app-root/src
+    networks:
+      - konfidat-net
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      FRONTEND_DEV_PROXY: ${FRONTEND_DEV_PROXY}
+      NPM_CONFIG_REGISTRY: ${NPM_REGISTRY_URL:-https://pbznexus.sit.pbz.hr/repository/pbz-npm-eap-group}
+      NPM_REGISTRY_USER: ${NPM_REGISTRY_USER:-}
+      NPM_REGISTRY_PASSWORD: ${NPM_REGISTRY_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - |
+        npm install && npm run dev
+    volumes:
+      - ./frontend:/opt/app-root/src:rw,Z
+    ports:
+      - "${POD_KONFIDAT_FRONTDEV_HOSTNAME:-127.0.0.1:10946}:8080"
+    depends_on:
+      - pbz-konfidat
+
+x-podman:
+  in_pod: false
+
+networks:
+  konfidat-net:
+    name: ${USER_PREFIX}-konfidat-net
+    driver: bridge
